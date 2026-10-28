@@ -1,58 +1,191 @@
-# AMME5710_Major-Project
+# Zone-Aware PPE Detection System
 
-## Zone-aware PPE inference
+## 1. Executive Summary
 
-The inference path is `main.py` → `video_processor.py` → `ppe_detector.py` and
-`worker_tracker.py` → `Zone/zone_integration.py`. The detector returns person
-tracks and PPE detections. `worker_tracker` links PPE detections to tracked
-people using their image boxes and keeps short-lived, per-track PPE evidence.
-`ZoneModule` uses each person's lower-centre point to find the configured zone,
-combines PPE requirements for overlapping zones, and evaluates that person's
-evidence against those requirements. Annotated image or video output displays
-the zone, person ID, and per-person result.
+This project processes still images and video to detect people and personal
+protective equipment (PPE), estimate each person's location in a camera-specific
+zone, and assess the detected PPE against that zone's requirements. It uses an
+Ultralytics YOLO model for object detection, ByteTrack for video identities,
+and polygon-based zone configuration.
 
-The active camera and zone rules come from `Zone/zone_config.json`; `main.py`
-selects the camera with `CAMERA_ID`. The current defaults select camera
-`Workshop site` and image `Testing.jpg`; that camera is marked at 672×493 with
-a `truck` zone requiring helmet, gloves, and boots. Set `MODEL_PATH` and
-`INPUT_PATH` in `main.py` to the model checkpoint and image or video to
-process. Supported images include JPG, PNG, BMP, TIFF and WebP; supported
-videos include MP4, AVI, MOV, MKV and WMV.
-Annotated images are saved as `<input>_annotated.png`; videos are saved next
-to the input with `_temporal` appended to the name. A still image is evaluated
-independently, without tracking across frames; its person detections receive
-temporary IDs only to associate that image's PPE with each person.
+The output is an annotated image or video showing each detected person's
+estimated zone and PPE assessment. The result is intended to assist review;
+it is not a substitute for direct safety supervision.
 
-PPE detections do not carry a reliable person identity from the model, so
-ownership is estimated spatially. When a detection fits multiple overlapping
-person boxes equally well, it is marked ambiguous and cannot establish
-compliance for either person. The lower-centre of the person box is also only
-an estimate of the floor position; it is not direct foot detection.
+## 2. Project Objectives
 
-Results distinguish evidence levels: `REQUIRED_PPE_DETECTED` means all PPE
-required by the current zone was observed recently; `REVIEW` means required PPE
-was not observed (this alone does not prove it is absent); `UNSAFE` indicates a
-configured prohibited zone or a detected PPE-violation class; `UNCERTAIN`
-indicates uncertain location or ambiguous required PPE; `UNMONITORED` means
-the person is outside marked zones; and `NO_PPE_REQUIRED` means the current
-zone has no PPE requirements. Zones must be drawn for the same camera view and
-aspect ratio as the input. The pipeline rejects incompatible views rather than
-applying unsafe polygon scaling.
+The inference system is intended to:
 
-### Code map
+1. Detect people, PPE items, and explicit missing-PPE labels.
+2. Associate PPE detections with individual people.
+3. Estimate each person's floor position and determine which configured zone
+   contains it.
+4. Apply the PPE rules associated with that zone.
+5. Retain recent PPE detections briefly across video frames.
+6. Save annotated output for inspection.
+
+## 3. System Overview
+
+### 3.1 Inference workflow
+
+The image and video inference path is:
+
+```text
+main.py
+  -> video_processor.py
+      -> ppe_detector.py
+      -> worker_tracker.py
+      -> Zone/zone_integration.py
+          -> Zone/zone_localisation.py
+              -> Zone/zone_core.py
+```
+
+`main.py` selects the model, input media, confidence threshold, PPE retention
+period, and camera configuration. `video_processor.py` dispatches the input to
+the image or video processor. The detector separates person detections from
+PPE detections; the worker association step links PPE to people. The zone
+module then adds each person's location, zone requirements, and compliance
+status before annotation is written.
+
+### 3.2 Zone configuration
+
+Zone polygons and their PPE rules are stored in
+[`Zone/zone_config.json`](Zone/zone_config.json). Polygons are drawn for a
+specific fixed camera view and saved in that reference image's pixel
+coordinates. The program can scale polygons to a different resolution when the
+input has the same aspect ratio. It rejects incompatible aspect ratios rather
+than risk applying a misplaced zone.
+
+The current inference defaults in `main.py` select camera `Workshop` and video
+`PPEVideo4.mp4`. The saved `Workshop` reference is 1920×1080 and currently has:
+
+| Zone | Required PPE |
+|---|---|
+| desk | vest |
+| conveyor | helmet, vest |
+
+Use the zone editor to create or update camera views and PPE rules. Use the
+same view, without cropping or camera movement, when recording the video that
+will be analyzed.
+
+## 4. Processing Method
+
+### 4.1 Detection and person association
+
+For video, YOLO tracking assigns person IDs across frames. For a still image,
+the program runs prediction without video tracking and assigns temporary IDs
+within that image.
+
+PPE detections do not inherently identify their wearer. The program therefore
+uses the PPE box centre and person bounding boxes to estimate ownership. It
+chooses the closest plausible person; when the best ownership matches are
+equally plausible, that PPE is marked ambiguous rather than credited to a
+person.
+
+### 4.2 Zone localisation
+
+The person's lower bounding-box centre is used as an estimate of their
+floor/foot position. The point is tested against that camera's saved polygons.
+If the estimate is near a zone boundary, the person touches the frame edge, or
+the feet are reported hidden, the location is treated as uncertain.
+
+When zones overlap, their required PPE lists are combined for the person.
+
+### 4.3 PPE evidence and time retention
+
+For video, the most recent time each PPE item was detected is recorded for
+each tracked person. An observation can count only during the person's current
+zone visit and while it is newer than the configured retention period.
+`PPE_RETENTION_SECONDS` is currently `0.5` in `main.py`.
+
+For a still image, only detections in that image are available; no evidence is
+retained over time. An explicit missing-PPE detection (for example,
+`no_helmet`) overrides positive evidence for that item.
+
+## 5. Result Interpretation
+
+These are program-generated assessment statuses, not YOLO object classes:
+
+| Status | Interpretation |
+|---|---|
+| `REQUIRED_PPE_DETECTED` | All PPE required by the person's zone was detected recently. This is evidence from the detector, not a guarantee of safety. |
+| `REVIEW` | One or more required items were not detected. A missed detection alone does not prove that the person is not wearing the item. |
+| `UNSAFE` | The person is in a zone configured as prohibited, or an explicit missing-PPE label contradicts a required item. |
+| `UNCERTAIN` | Location, tracking identity, PPE evidence, or PPE ownership is uncertain. |
+| `UNMONITORED` | The estimated floor position is outside all marked zones. |
+| `NO_PPE_REQUIRED` | The person is in a marked zone with no PPE requirements. |
+
+The annotation uses green for `REQUIRED_PPE_DETECTED` and
+`NO_PPE_REQUIRED`, red for `UNSAFE`, and orange for other statuses.
+
+## 6. Running the Program
+
+### 6.1 Configure an inference run
+
+Edit these values near the top of `main.py`:
+
+| Setting | Purpose |
+|---|---|
+| `MODEL_PATH` | Trained YOLO checkpoint. |
+| `INPUT_PATH` | Image or video to process. |
+| `CONFIDENCE_THRESHOLD` | Minimum detector confidence. |
+| `PPE_RETENTION_SECONDS` | How long recent PPE evidence may count in video. |
+| `ZONE_CONFIG_PATH` | Saved camera and zone configuration JSON. |
+| `CAMERA_ID` | Camera entry whose polygons and rules match the input view. |
+
+Run from the repository directory on Windows:
+
+```powershell
+python main.py
+```
+
+[`run_inference.py`](run_inference.py) remains an alternative launcher for the
+same entry point.
+
+### 6.2 Supported input and output
+
+Supported image formats: JPG, JPEG, PNG, BMP, TIFF, and WebP. The annotated
+image is saved beside its input as `<input>_annotated.png`.
+
+Supported video formats: MP4, AVI, MOV, MKV, and WMV. The annotated video is
+saved beside its input with `_temporal` appended to its filename.
+
+## 7. Limitations and Assumptions
+
+- PPE-to-person ownership is estimated from bounding-box geometry. Overlapping
+  people or PPE boxes can make the assignment ambiguous.
+- A person's floor position is estimated from the bottom-centre of the person
+  bounding box; the detector does not directly locate their feet.
+- A missed PPE detection results in `REVIEW`, not a confirmed violation.
+- Zone polygons are valid only for their saved camera view. Resolution scaling
+  does not compensate for camera movement, rotation, or cropping.
+- Still-image assessments have no cross-frame tracking or temporal PPE
+  retention.
+- The result depends on the detector's classes, confidence threshold, image
+  quality, and camera view.
+
+## 8. Source Code Map
 
 | File | Responsibility |
-| --- | --- |
-| `main.py` / `run_inference.py` | Configure the model, input image/video, camera, and start inference; `run_inference.py` is a compatibility launcher. |
-| `video_processor.py` | Process still images or videos, run detection and person association, apply zone rules, and write annotated output. |
-| `ppe_detector.py` | Run Ultralytics prediction/tracking and split detections into people, PPE, and violation classes. |
-| `worker_tracker.py` | Associate PPE to tracked people and maintain per-person recent PPE evidence. |
-| `compliance.py` | Earlier static-zone compliance helper; the current inference path uses `ZoneModule` instead. |
-| `Zone/zone_core.py` | Validate zone JSON and polygons, scale polygons to video resolution, and provide legacy/simple geometry helpers. |
-| `Zone/zone_localisation.py` | Estimate each person's floor point from their box and determine zone membership, boundary uncertainty, and PPE requirements. |
-| `Zone/zone_integration.py` | Maintain per-person zone visits, evaluate required PPE, classify results, and draw the result overlays. |
-| `Zone/zone_editor.py` / `Zone/zone_setup.py` | Create, edit, validate, and save camera references and zone polygons. |
-| `training.py` | Train/compare object detectors; it is separate from the inference pipeline. |
+|---|---|
+| [`main.py`](main.py) | Configures and starts image/video inference. |
+| [`run_inference.py`](run_inference.py) | Compatibility launcher for `main.py`. |
+| [`video_processor.py`](video_processor.py) | Dispatches image/video inputs, runs frame processing, and writes annotated output. |
+| [`ppe_detector.py`](ppe_detector.py) | Runs YOLO prediction/tracking and separates people, PPE, and violation detections. |
+| [`worker_tracker.py`](worker_tracker.py) | Associates PPE with people and maintains per-person recent PPE evidence. |
+| [`Zone/zone_core.py`](Zone/zone_core.py) | Validates zone JSON and polygons, scales coordinates, and provides geometry helpers. |
+| [`Zone/zone_localisation.py`](Zone/zone_localisation.py) | Estimates floor points and finds zone membership and required PPE. |
+| [`Zone/zone_integration.py`](Zone/zone_integration.py) | Combines location and PPE evidence, assigns statuses, annotates frames, and exports activity polygons. |
+| [`Zone/zone_editor.py`](Zone/zone_editor.py) | Provides the camera and zone editing interface and persistence workflow. |
+| [`Zone/zone_setup.py`](Zone/zone_setup.py) | Loads local or notebook media into the zone editor. |
+| [`compliance.py`](compliance.py) | Legacy static-zone compliance helper; the active inference path uses `ZoneModule`. |
+| [`training.py`](training.py) | Trains and evaluates detector models; separate from inference. |
+| [`tests/test_zone_pipeline.py`](tests/test_zone_pipeline.py) | Tests PPE association, image inference, zone assignment, and compliance statuses. |
 
-People without a tracker ID are still shown, but remain `UNCERTAIN` because PPE
-history cannot safely be linked to them across frames.
+## 9. Validation
+
+The focused test suite can be run from the repository directory with:
+
+```powershell
+python -m unittest discover -s tests -v
+```
