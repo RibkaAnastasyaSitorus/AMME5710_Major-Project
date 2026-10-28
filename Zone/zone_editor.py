@@ -260,6 +260,18 @@ class ZoneEditorBase:
             style={"description_width": "110px"},
             layout=widgets.Layout(width="650px"),
         )
+        # Keep the existing save/load field in sync with the checkbox selection.
+        self.required_ppe_input.layout.display = "none"
+        self.ppe_checkboxes = {}
+        self.ppe_choices = widgets.VBox()
+        self.ppe_selection = widgets.VBox([
+            widgets.HTML("<b>Required PPE</b>"),
+            self.ppe_choices,
+            widgets.HTML("Tick all required items. Leave all unticked if none are required."),
+        ])
+        self._syncing_ppe = False
+        self._sync_ppe_checkboxes()
+        self.required_ppe_input.observe(self._sync_ppe_checkboxes, names="value")
         self.all_views = widgets.Checkbox(
             value=False,
             description="Apply name/PPE changes to other cameras sharing this rule",
@@ -273,7 +285,7 @@ class ZoneEditorBase:
             [
                 self.shared_zone,
                 self.zone_name_input,
-                self.required_ppe_input,
+                self.ppe_selection,
                 self.all_views,
                 widgets.HBox(
                     [
@@ -397,6 +409,34 @@ class ZoneEditorBase:
             self.load_camera(change["new"])
         except Exception as error:
             self.message(str(error), True)
+
+    def _sync_ppe_checkboxes(self, change=None):
+        if self._syncing_ppe:
+            return
+        self._syncing_ppe = True
+        try:
+            selected = {item.strip() for item in self.required_ppe_input.value.split(",") if item.strip()}
+            names = ["helmet", "vest", "gloves", "boots", "goggles"]
+            # Preserve additional PPE names already used in saved zones.
+            saved = self.config_store.config.get("zone_rules", {}).values()
+            extra = {item for rule in saved for item in rule["required_ppe"]}
+            names += sorted((extra | selected | set(self.ppe_checkboxes)) - set(names))
+            for name in names:
+                if name not in self.ppe_checkboxes:
+                    checkbox = self.widgets.Checkbox(description=name.replace("_", " ").capitalize(), indent=False)
+                    checkbox.observe(self._update_ppe_selection, names="value")
+                    self.ppe_checkboxes[name] = checkbox
+                self.ppe_checkboxes[name].value = name in selected
+            self.ppe_choices.children = tuple(self.ppe_checkboxes[name] for name in names)
+        finally:
+            self._syncing_ppe = False
+
+    def _update_ppe_selection(self, change):
+        if self._syncing_ppe:
+            return
+        self.required_ppe_input.value = ", ".join(
+            name for name, checkbox in self.ppe_checkboxes.items() if checkbox.value
+        )
 
     @staticmethod
     def unpack_uploaded_file(value):
@@ -627,7 +667,7 @@ class ZoneEditorBase:
         self.update_controls()
         self.redraw_canvas()
         self.message(
-            "Type a zone name and PPE, click its floor corners, then Save zone."
+            "Enter a zone name, tick the required PPE, click the floor corners, then Save zone."
         )
 
     def handle_rule_selection(self, change):
@@ -942,10 +982,7 @@ class CameraZoneEditor(ZoneEditorBase):
         )
         self.form.children = (
             self.zone_name_input,
-            self.required_ppe_input,
-            widgets.HTML(
-                "PPE names: separate with commas. Leave empty if no PPE is required."
-            ),
+            self.ppe_selection,
             widgets.HBox([self.undo_button, self.redraw_button]),
             widgets.HBox([self.save_button, self.cancel_button]),
         )
@@ -1155,7 +1192,7 @@ class CameraZoneEditor(ZoneEditorBase):
     def start_adding_zone(self):
         super().start_adding_zone()
         self.message(
-            "New zone: enter its name and PPE, click the floor corners, then Save zone."
+            "New zone: enter its name, tick the required PPE, click the floor corners, then Save zone."
         )
         self.update_layout()
 
