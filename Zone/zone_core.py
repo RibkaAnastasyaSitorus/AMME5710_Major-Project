@@ -11,14 +11,17 @@ import numpy as np
 
 
 def empty_config():
+    """Create the versioned config structure expected by the zone editor."""
     return {"schema_version": 1, "zone_rules": {}, "cameras": {}}
 
 
 def cross(a, b, c):
+    """Return the signed 2D cross product used by edge tests."""
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
 
 def on_segment(point, a, b):
+    """Check collinearity and inclusive bounds with a small numeric tolerance."""
     return (
         abs(cross(a, b, point)) < 1e-9
         and min(a[0], b[0]) - 1e-9 <= point[0] <= max(a[0], b[0]) + 1e-9
@@ -27,6 +30,7 @@ def on_segment(point, a, b):
 
 
 def segments_intersect(a, b, c, d):
+    """Detect proper crossings and endpoints that lie on another segment."""
     x = cross(a, b, c)
     y = cross(a, b, d)
     z = cross(c, d, a)
@@ -42,6 +46,7 @@ def segments_intersect(a, b, c, d):
 
 
 def validate_polygon(points, image_size):
+    """Reject zone polygons that cannot be safely used as image regions."""
     width, height = image_size
 
     if len(points) < 3:
@@ -64,6 +69,7 @@ def validate_polygon(points, image_size):
 
     n = len(points)
 
+    # Shoelace area catches polygons whose vertices do not enclose a useful area.
     area = (
         abs(
             sum(
@@ -91,6 +97,7 @@ def validate_polygon(points, image_size):
 
 
 def validate_config(config):
+    """Validate schema version, shared rules, camera sizes, and polygons."""
     if config.get("schema_version") != 1:
         raise ValueError("Unsupported configuration version.")
 
@@ -129,6 +136,7 @@ def validate_config(config):
 
 
 def save_config(config, filename="zone_config.json"):
+    """Validate then atomically replace the saved JSON configuration."""
     validate_config(config)
 
     path = Path(filename)
@@ -142,6 +150,7 @@ def save_config(config, filename="zone_config.json"):
 
 
 def load_config(filename="zone_config.json"):
+    """Read the JSON configuration and validate it before returning it."""
     config = json.loads(Path(filename).read_text(encoding="utf-8"))
     return validate_config(config)
 
@@ -149,7 +158,7 @@ def load_config(filename="zone_config.json"):
 # Coordinate convention: [width, height]. Polygons belong to one fixed viewpoint.
 # Scaling is valid for resizing, never for camera motion, rotation or cropping.
 def scaled_zones(config, camera_id, frame_size):
-    """Scale polygons when the matching video has a different resolution."""
+    """Scale polygons when the matching media has a different resolution."""
     camera = config["cameras"][camera_id]
 
     reference_width, reference_height = camera["reference_size"]
@@ -168,6 +177,7 @@ def scaled_zones(config, camera_id, frame_size):
             "Use the matching camera view without cropping."
         )
 
+    # Preserve the polygon shape by scaling x and y only after aspect validation.
     return {
         zone_id: [
             [
@@ -181,7 +191,7 @@ def scaled_zones(config, camera_id, frame_size):
 
 
 def point_in_polygon(point, polygon):
-    """Boundary points count as inside."""
+    """Return whether a point is inside a polygon; boundary points count as inside."""
     x, y = point
     inside = False
 
@@ -204,6 +214,7 @@ def locate_person(box, config, camera_id, frame_size):
     box: [x1, y1, x2, y2]
     Returns all zones containing the estimated foot position.
     """
+    # The bottom-centre is a floor-position estimate, not direct foot detection.
     x1, y1, x2, y2 = map(float, box)
     foot_point = ((x1 + x2) / 2, y2)
 
@@ -262,9 +273,11 @@ class ZoneSmoother:
         self.tracks = {}
 
     def update(self, track_id, zones, frame_index):
+        """Return a zone set only after it stays stable across consecutive frames."""
         key = tuple(sorted(zones))
         state = self.tracks.get(track_id)
 
+        # A long observation gap discards the old candidate for this person.
         if state is None or frame_index - state["last"] > self.max_gap:
             state = {
                 "stable": None,
@@ -285,6 +298,7 @@ class ZoneSmoother:
         state["last"] = frame_index
         self.tracks[track_id] = state
 
+        # Drop stale tracks so old candidates do not accumulate indefinitely.
         self.tracks = {
             key: value
             for key, value in self.tracks.items()

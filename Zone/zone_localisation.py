@@ -3,13 +3,18 @@ import copy
 import math
 import cv2
 import numpy as np
-from zone_core import load_config, validate_config, scaled_zones, point_in_polygon
+
+if __package__:
+    from .zone_core import validate_config, scaled_zones, point_in_polygon
+else:
+    from zone_core import validate_config, scaled_zones, point_in_polygon
 
 
 class ZoneLocaliser:
     """One fixed camera view; initialise again after changing zones or camera view."""
 
     def __init__(self, config, camera_id, frame_size, boundary_margin_px=6):
+        # Validate geometry once, then cache polygons scaled to this frame size.
         validate_config(config)
         if camera_id not in config['cameras']:
             raise ValueError(f'Camera {camera_id!r} not found. Available: {list(config["cameras"])}')
@@ -24,14 +29,17 @@ class ZoneLocaliser:
         self.polygons = scaled_zones(self.config, camera_id, frame_size)
 
     def locate(self, bbox, feet_visible=None):
+        """Estimate a person's zone from the bottom-centre of their bounding box."""
         box = np.asarray(bbox, dtype=float)
         if box.shape != (4,) or not np.isfinite(box).all() or box[2] <= box[0] or box[3] <= box[1]:
             raise ValueError('Person bbox must be finite xyxy pixels with positive dimensions.')
         x1, y1, x2, y2 = box
         width, height = self.frame_size
+        # The box bottom approximates where the person's feet meet the floor.
         point = (float((x1 + x2) / 2), float(y2))
         candidates = [z for z, poly in self.polygons.items() if point_in_polygon(point, poly)]
         reason = None
+        # These cases make the floor-point estimate unreliable for rule assignment.
         if feet_visible is False:
             reason = 'Feet reported hidden'
         elif x1 <= 1 or y1 <= 1 or x2 >= width - 1 or y2 >= height - 1:
@@ -39,8 +47,10 @@ class ZoneLocaliser:
         elif any(abs(cv2.pointPolygonTest(np.asarray(poly, np.float32), point, True)) <= self.margin
                  for poly in self.polygons.values()):
             reason = 'Estimated floor point is near a zone boundary'
+        # None distinguishes uncertain location from a confident point outside zones.
         zone_ids = None if reason else sorted(candidates)
         rules = self.config['zone_rules']
+        # Overlapping zones combine their PPE requirements for this person.
         return {
             'floor_point': list(point), 'location_status': 'uncertain' if reason else 'estimated',
             'location_reason': reason, 'candidate_zone_ids': candidates, 'zone_ids': zone_ids,
@@ -52,6 +62,7 @@ class ZoneLocaliser:
         }
 
     def draw(self, frame):
+        """Draw the saved zone outlines and labels on a copy of the input frame."""
         if frame.shape[1::-1] != self.frame_size:
             raise ValueError('Frame resolution changed. Recreate the localiser.')
         output = frame.copy()

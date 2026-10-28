@@ -2,19 +2,63 @@ from pathlib import Path
 
 import cv2
 
-from compliance import evaluate_compliance
 from ppe_detector import detect_frame
 from worker_tracker import update_workers
+
+IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+VIDEO_EXTENSIONS = {".avi", ".mkv", ".mov", ".mp4", ".wmv"}
+
+
+def process_image(
+    model,
+    file_path,
+    confidence_threshold,
+    zone_module,
+):
+    """Detect PPE in one image, apply camera zones, and save an annotated PNG."""
+    if Path(file_path).suffix.lower() not in IMAGE_EXTENSIONS:
+        raise ValueError("This section expects an image file.")
+
+    frame = cv2.imread(str(file_path))
+    if frame is None:
+        raise RuntimeError(f"Cannot open image: {file_path}")
+
+    height, width = frame.shape[:2]
+    zone_module.prepare((width, height))
+    persons, ppe_detections = detect_frame(
+        frame,
+        model,
+        confidence_threshold,
+        tracking=False,
+    )
+    # One still has no temporal PPE history, so evaluate only its current detections.
+    workers = update_workers(persons, ppe_detections, {}, 0.0)
+    workers = zone_module.process(
+        workers,
+        frame_size=(width, height),
+        video_time=0.0,
+        ppe_last_seen=None,
+    )
+
+    output_path = str(
+        Path(file_path).with_name(Path(file_path).stem + "_annotated.png")
+    )
+    annotated = zone_module.annotate(frame, workers)
+    if not cv2.imwrite(output_path, annotated):
+        raise RuntimeError(f"Cannot write annotated image: {output_path}")
+
+    print("Image processing complete.")
+    print("Output:", output_path)
+    return output_path
 
 
 def process_video(
     model,
     file_path,
     confidence_threshold,
-    retention_seconds,
-    current_zone,
-    required_ppe,
+    zone_module,
 ):
+    """Process each video frame while retaining PPE evidence by person track."""
     if Path(file_path).suffix.lower() not in {
         ".mp4", ".avi", ".mov", ".mkv", ".wmv"
     }:
@@ -25,35 +69,37 @@ def process_video(
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {file_path}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    if fps <= 0:
-        cap.release()
-        raise RuntimeError("Invalid video FPS.")
-
-    output_path = str(
-        Path(file_path).with_name(
-            Path(file_path).stem + "_temporal.mp4"
-        )
-    )
-
-    writer = cv2.VideoWriter(
-        output_path,
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (width, height)
-    )
-
-    if not writer.isOpened():
-        cap.release()
-        raise RuntimeError("Cannot create output video.")
-
-    worker_ppe_last_seen = {}
-    frame_number = 0
+    writer = None
 
     try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        if fps <= 0:
+            raise RuntimeError("Invalid video FPS.")
+
+        zone_module.prepare((width, height))
+
+        output_path = str(
+            Path(file_path).with_name(
+                Path(file_path).stem + "_temporal.mp4"
+            )
+        )
+        writer = cv2.VideoWriter(
+            output_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps,
+            (width, height)
+        )
+
+        if not writer.isOpened():
+            raise RuntimeError("Cannot create output video.")
+
+        # Histories persist between frames so brief detector misses do not erase PPE.
+        worker_ppe_last_seen = {}
+        frame_number = 0
+
         while True:
             success, frame = cap.read()
 
@@ -61,6 +107,7 @@ def process_video(
                 break
 
             frame_number += 1
+            # Convert frame index into media time for the retention window.
             video_time = (frame_number - 1) / fps
 
             persons, ppe_detections = detect_frame(
@@ -74,109 +121,62 @@ def process_video(
                 worker_ppe_last_seen,
                 video_time,
             )
-            evaluate_compliance(
+            # Apply each person's current zone rule to their recent PPE evidence.
+            workers = zone_module.process(
                 workers,
-                worker_ppe_last_seen,
-                video_time,
-                required_ppe,
-                retention_seconds,
+                frame_size=(width, height),
+                video_time=video_time,
+                ppe_last_seen=worker_ppe_last_seen,
             )
 
-            annotated = frame.copy()
-
-            for track_id, worker in workers.items():
-                x1, y1, x2, y2 = worker["bbox"]
-
-                color = (
-                    (0, 255, 0)
-                    if worker["status"] == "SAFE"
-                    else (0, 0, 255)
-                )
-
-                cv2.rectangle(
-                    annotated,
-                    (x1, y1),
-                    (x2, y2),
-                    color,
-                    3
-                )
-
-                cv2.putText(
-                    annotated,
-                    f"Worker #{track_id}",
-                    (x1, y1 - 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    color,
-                    2
-                )
-
-                cv2.putText(
-                    annotated,
-                    worker["status"],
-                    (x1, y1 - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    color,
-                    2
-                )
-
-                if worker["missing"]:
-                    missing_text = ", ".join(
-                        sorted(worker["missing"])
-                    )
-
-                    cv2.putText(
-                        annotated,
-                        f"Missing: {missing_text}",
-                        (x1, y2 + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        color,
-                        2
-                    )
-
-            cv2.rectangle(
-                annotated,
-                (10, 10),
-                (350, 50),
-                (30, 30, 30),
-                -1
-            )
-
-            cv2.putText(
-                annotated,
-                f"ZONE: {current_zone.upper()}",
-                (20, 35),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
+            annotated = zone_module.annotate(frame, workers)
 
             writer.write(annotated)
 
             if frame_number % max(1, int(fps)) == 0:
-                safe_count = sum(
-                    worker["status"] == "SAFE"
-                    for worker in workers.values()
-                )
-
-                unsafe_count = sum(
-                    worker["status"] == "UNSAFE"
-                    for worker in workers.values()
-                )
+                status_counts = {}
+                for worker in workers.values():
+                    status = worker["zone_compliance_status"]
+                    status_counts[status] = status_counts.get(status, 0) + 1
 
                 print(
                     f"{video_time:.1f}s | "
-                    f"SAFE={safe_count} "
-                    f"UNSAFE={unsafe_count}"
+                    + " ".join(
+                        f"{status}={count}"
+                        for status, count in sorted(status_counts.items())
+                    )
                 )
 
     finally:
         cap.release()
-        writer.release()
+        if writer is not None:
+            writer.release()
 
     print("Video processing complete.")
     print("Output:", output_path)
     return output_path
+
+
+def process_media(
+    model,
+    file_path,
+    confidence_threshold,
+    zone_module,
+):
+    """Dispatch an input file to the matching still-image or video pipeline."""
+    suffix = Path(file_path).suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        return process_image(
+            model,
+            file_path,
+            confidence_threshold,
+            zone_module,
+        )
+    if suffix in VIDEO_EXTENSIONS:
+        return process_video(
+            model,
+            file_path,
+            confidence_threshold,
+            zone_module,
+        )
+    raise ValueError(f"Unsupported image or video file: {file_path}")

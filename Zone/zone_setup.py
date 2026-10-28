@@ -15,6 +15,7 @@ def load_camera_reference(editor,camera_id,media_path):
     if not path.is_file():
         raise FileNotFoundError(f'Reference file not found: {path}')
     if camera_id not in editor.config_store.config['cameras']:
+        # A new camera stores both its image dimensions and an embedded reference.
         image=editor.read_reference_media(path)
         editor.config_store.add_camera(camera_id,[image.shape[1],image.shape[0]],
                                        editor.encode_reference_png(image),path.name)
@@ -41,6 +42,8 @@ def display_file_loader(editor,folder='/content'):
     refresh=W.Button(description='Refresh files')
     load=W.Button(description='Open camera',button_style='success')
     status=W.Output()
+
+    # Refresh the dropdown from supported media files in the chosen directory.
     def refresh_files(_=None):
         with status:
             status.clear_output()
@@ -53,6 +56,7 @@ def display_file_loader(editor,folder='/content'):
                              if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES]
             if not choices.options:
                 print('No images/videos found. Upload them through Colab Files, then Refresh files.')
+    # Route validation and loading errors into the notebook status panel.
     def open_camera(_):
         with status:
             status.clear_output()

@@ -19,12 +19,14 @@ class ZoneConfigStore:
     """Transactional changes: validate/write first, then update the working copy."""
 
     def __init__(self, filename, validate_configuration, validate_zone_polygon):
+        """Bind the config path and validation callbacks, then load saved state."""
         self.path = Path(filename).resolve()
         self.validate_configuration = validate_configuration
         self.validate_zone_polygon = validate_zone_polygon
         self.reload()
 
     def file_fingerprint(self):
+        """Return a content hash used to detect edits made by another process."""
         return (
             hashlib.sha256(self.path.read_bytes()).hexdigest()
             if self.path.exists()
@@ -32,6 +34,7 @@ class ZoneConfigStore:
         )
 
     def reload(self):
+        """Load and validate the file, or initialise an empty versioned config."""
         if self.path.exists():
             self.config = self.validate_configuration(
                 json.loads(self.path.read_text(encoding="utf-8"))
@@ -41,6 +44,7 @@ class ZoneConfigStore:
         self.loaded_file_fingerprint = self.file_fingerprint()
 
     def save_config(self, config):
+        """Validate and atomically save a draft before replacing in-memory state."""
         self.validate_configuration(config)
         if self.file_fingerprint() != self.loaded_file_fingerprint:
             raise ValueError(
@@ -54,6 +58,7 @@ class ZoneConfigStore:
         self.loaded_file_fingerprint = self.file_fingerprint()
 
     def add_camera(self, camera_id, size, image_png, source):
+        """Add a camera with its dimensions and embedded reference image."""
         camera_id = camera_id.strip()
         if not camera_id:
             raise ValueError("Enter a camera name.")
@@ -70,6 +75,7 @@ class ZoneConfigStore:
         return camera_id
 
     def attach_reference(self, camera_id, size, image_png, source):
+        """Attach the exact-size reference image to an existing camera."""
         updated = copy.deepcopy(self.config)
         camera_config = updated["cameras"][camera_id]
         if camera_config["reference_size"] != list(size):
@@ -88,6 +94,7 @@ class ZoneConfigStore:
         polygon_points,
         update_shared=False,
     ):
+        """Save a camera-specific polygon and its shared PPE rule metadata."""
         zone_name_input = zone_name_input.strip()
         if not zone_name_input:
             raise ValueError("Enter a zone name.")
@@ -118,6 +125,7 @@ class ZoneConfigStore:
         return target
 
     def remove_zone(self, camera_id, zone_id):
+        """Remove one polygon from this camera without deleting reusable rules."""
         updated = copy.deepcopy(self.config)
         updated["cameras"][camera_id]["zones"].pop(zone_id)
         # Retain shared rules for reuse; never delete another camera's polygon.
@@ -141,6 +149,7 @@ class ZoneEditorBase:
     """Instantiate after %matplotlib widget and the zone-core definition cell."""
 
     def __init__(self, config_path="zone_config.json"):
+        """Build the widget controls and connect them to editor callbacks."""
         import ipywidgets as widgets
         import matplotlib.pyplot as plt
         from IPython.display import display
@@ -360,6 +369,7 @@ class ZoneEditorBase:
         self.redraw_canvas()
 
     def button(self, label, action, style=""):
+        """Create a button that reports callback errors in the editor status area."""
         b = self.widgets.Button(
             description=label,
             button_style=style,
@@ -376,10 +386,12 @@ class ZoneEditorBase:
         return b
 
     def message(self, text, error=False):
+        """Display escaped status text so it is rendered as text, not markup."""
         colour = "#a12622" if error else "#176044"
         self.status.value = f'<div style="padding:10px;background:#f3f6f8;color:{colour}">{html.escape(text)}</div>'
 
     def refresh_cameras(self, select=None):
+        """Refresh camera choices and optionally focus a requested camera."""
         self.updating_widget_values = True
         self.camera_selector.options = [
             (c, c) for c in self.config_store.config["cameras"]
@@ -392,6 +404,7 @@ class ZoneEditorBase:
         self.updating_widget_values = False
 
     def reload(self):
+        """Reload saved configuration and refresh whichever camera is selected."""
         self.config_store.reload()
         self.refresh_cameras(self.active_camera_id)
         if self.camera_selector.value:
@@ -402,6 +415,7 @@ class ZoneEditorBase:
             self.redraw_canvas()
 
     def handle_camera_selection(self, change):
+        """Load newly selected camera data while reporting load errors to the UI."""
         if self.updating_widget_values or not change["new"]:
             return
         try:
@@ -411,6 +425,7 @@ class ZoneEditorBase:
             self.message(str(error), True)
 
     def _sync_ppe_checkboxes(self, change=None):
+        """Keep checkboxes aligned with saved, selected, and additional PPE labels."""
         if self._syncing_ppe:
             return
         self._syncing_ppe = True
@@ -432,6 +447,7 @@ class ZoneEditorBase:
             self._syncing_ppe = False
 
     def _update_ppe_selection(self, change):
+        """Write checkbox selections back to the comma-separated PPE field."""
         if self._syncing_ppe:
             return
         self.required_ppe_input.value = ", ".join(
@@ -489,6 +505,7 @@ class ZoneEditorBase:
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), filename
 
     def read_media(self):
+        """Read the selected upload or path and return image pixels plus source."""
         import numpy as np
         from PIL import Image, ImageOps
 
@@ -534,6 +551,7 @@ class ZoneEditorBase:
         return base64.b64encode(stream.getvalue()).decode("ascii")
 
     def load_camera(self, camera_id):
+        """Restore a camera's embedded reference and refresh its saved zones."""
         import numpy as np
         from PIL import Image
 
@@ -585,6 +603,7 @@ class ZoneEditorBase:
             )
 
     def refresh_zones(self, select=None):
+        """Refresh the zone selector for the currently active camera."""
         self.updating_widget_values = True
         camera_config = self.config_store.config["cameras"].get(
             self.active_camera_id, {"zones": {}}
@@ -599,6 +618,7 @@ class ZoneEditorBase:
         self.handle_zone_selection(None)
 
     def handle_zone_selection(self, _):
+        """Show selected zone requirements and redraw the reference canvas."""
         if self.updating_widget_values:
             return
         z = self.zone_selector.value
@@ -613,6 +633,7 @@ class ZoneEditorBase:
         self.redraw_canvas()
 
     def open_camera_form(self):
+        """Show controls for adding a camera or attaching its missing reference."""
         self.camera_form.layout.display = "flex"
         self.camera_name.value = ""
         self.message(
@@ -620,6 +641,7 @@ class ZoneEditorBase:
         )
 
     def create_camera(self):
+        """Read a reference and persist a new named camera."""
         reference_image, source = self.read_media()
         c = self.config_store.add_camera(
             self.camera_name.value,
@@ -631,6 +653,7 @@ class ZoneEditorBase:
         self.load_camera(c)
 
     def attach_reference(self):
+        """Attach a reference image to the selected saved camera."""
         if not self.active_camera_id:
             raise ValueError("Select a saved camera first.")
         if self.reference_image is not None:
@@ -647,6 +670,7 @@ class ZoneEditorBase:
         self.load_camera(self.active_camera_id)
 
     def start_adding_zone(self):
+        """Start a draft polygon and initialise a new zone's rule fields."""
         self.editor_mode = "add"
         self.polygon_points = []
         self.editing_zone_id = None
@@ -671,6 +695,7 @@ class ZoneEditorBase:
         )
 
     def handle_rule_selection(self, change):
+        """Load a reusable shared rule into the new-zone form when selected."""
         if self.updating_widget_values or self.editor_mode != "add":
             return
         z = change["new"]
@@ -685,6 +710,7 @@ class ZoneEditorBase:
         self.update_controls()
 
     def start_editing_zone(self):
+        """Copy the selected zone into a draft that can be edited or cancelled."""
         self.editing_zone_id = self.zone_selector.value
         if not self.editing_zone_id:
             return
@@ -707,12 +733,14 @@ class ZoneEditorBase:
         )
 
     def start_removing_zone(self):
+        """Ask for confirmation before removing the selected camera polygon."""
         self.editor_mode = "remove"
         self.editing_zone_id = self.zone_selector.value
         self.remove_form.layout.display = "flex"
         self.update_controls()
 
     def confirm_zone_removal(self):
+        """Persist the confirmed removal and return the editor to view mode."""
         self.config_store.remove_zone(self.active_camera_id, self.editing_zone_id)
         self.finish_zone_edit()
         self.refresh_zones()
@@ -721,6 +749,7 @@ class ZoneEditorBase:
         )
 
     def save_zone(self):
+        """Validate and persist the current draft zone before refreshing the view."""
         z = self.config_store.save_zone(
             self.active_camera_id,
             self.editing_zone_id,
@@ -736,6 +765,7 @@ class ZoneEditorBase:
         )
 
     def finish_zone_edit(self):
+        """Discard draft state and restore the non-editing controls."""
         self.editor_mode = "view"
         self.polygon_points = []
         self.dragged_corner_index = None
@@ -746,15 +776,18 @@ class ZoneEditorBase:
         self.redraw_canvas()
 
     def cancel(self):
+        """Discard the current draft without changing saved zone data."""
         self.finish_zone_edit()
         self.message("Cancelled. Saved zones were not changed.")
 
     def clear_draft_boundary(self):
+        """Remove all unsaved polygon corners so a boundary can be redrawn."""
         self.polygon_points = []
         self.dragged_corner_index = None
         self.redraw_canvas()
 
     def undo_last_corner(self):
+        """Remove the most recently added draft corner."""
         if self.polygon_points:
             self.polygon_points.pop()
         self.dragged_corner_index = None
@@ -762,6 +795,7 @@ class ZoneEditorBase:
 
     # Disable competing actions while a draft or deletion confirmation is open.
     def update_controls(self):
+        """Enable only actions valid for the active editor mode and selection."""
         viewing = self.editor_mode == "view"
         ready = self.reference_image is not None
         self.camera_selector.disabled = not viewing
@@ -790,6 +824,7 @@ class ZoneEditorBase:
 
     # Select saved polygons in view mode; add/drag draft corners in edit mode.
     def handle_canvas_click(self, event):
+        """Select saved zones or add/drag draft corners from mouse clicks."""
         if (
             event.inaxes != self.axes
             or event.button != 1
@@ -829,6 +864,7 @@ class ZoneEditorBase:
         self.redraw_canvas()
 
     def handle_canvas_motion(self, event):
+        """Move the active draft corner while the mouse is being dragged."""
         if self.dragged_corner_index is None or event.inaxes != self.axes:
             return
         h, w = self.reference_image.shape[:2]
@@ -839,10 +875,12 @@ class ZoneEditorBase:
         self.redraw_canvas()
 
     def handle_canvas_release(self, _):
+        """Finish a corner drag when the mouse button is released."""
         self.dragged_corner_index = None
 
     @staticmethod
     def contains_point(point, polygon):
+        """Use the shared polygon test so editor and inference agree on edges."""
         # Use the same geometry as downstream localisation.
         if "point_in_polygon" in globals():
             return point_in_polygon(point, polygon)
@@ -851,6 +889,7 @@ class ZoneEditorBase:
         return point_in_polygon(point, polygon)
 
     def redraw_canvas(self):
+        """Render the reference image, saved polygons, and any active draft."""
         from matplotlib.patches import Polygon
 
         self.axes.clear()
@@ -922,6 +961,7 @@ class CameraZoneEditor(ZoneEditorBase):
     """Same saved schema; show only the current task using plain instructions."""
 
     def __init__(self, config_path="zone_config.json"):
+        """Build the simplified notebook layout on top of shared editor logic."""
         # Reuse the tested geometry and persistence callbacks, not the old layout.
         from IPython.utils.capture import capture_output
         from IPython.display import display
@@ -1051,6 +1091,7 @@ class CameraZoneEditor(ZoneEditorBase):
         self.redraw_canvas()
 
     def update_layout(self):
+        """Show only controls appropriate to the simplified camera workflow."""
         if not self.layout_ready:
             return
         removing_camera = self.editor_mode == "remove_camera"
@@ -1107,11 +1148,13 @@ class CameraZoneEditor(ZoneEditorBase):
 
     # Disable competing actions while a draft or deletion confirmation is open.
     def update_controls(self):
+        """Apply base control states, then refresh the simplified layout."""
         super().update_controls()
         if getattr(self, "layout_ready", False):
             self.update_layout()
 
     def open_camera_form(self):
+        """Begin adding a camera without exposing the older path-based form."""
         if not getattr(self, "layout_ready", False):
             return super().open_camera_form()
         self.adding_camera = True
@@ -1122,11 +1165,13 @@ class CameraZoneEditor(ZoneEditorBase):
         )
 
     def cancel_reference(self):
+        """Cancel camera creation and restore the saved-camera view."""
         self.adding_camera = False
         self.update_layout()
         self.message("Cancelled. Choose a saved camera or add a new one.")
 
     def load_camera(self, camera_id):
+        """Restore a camera while suppressing the base class's old UI prompts."""
         # Parent restores polygons and embedded reference from the same camera.
         # Avoid its old missing-reference form opening as a NEW camera request.
         ready = getattr(self, "layout_ready", False)
@@ -1147,6 +1192,7 @@ class CameraZoneEditor(ZoneEditorBase):
                 self.message("Camera opened. Its saved zones are displayed below.")
 
     def handle_reference_upload(self, change):
+        """Save an uploaded camera image or attach it to the active camera."""
         if not change["new"]:
             return
         value = change["new"]
@@ -1190,6 +1236,7 @@ class CameraZoneEditor(ZoneEditorBase):
                 pass
 
     def start_adding_zone(self):
+        """Start the shared add flow and show simplified user guidance."""
         super().start_adding_zone()
         self.message(
             "New zone: enter its name, tick the required PPE, click the floor corners, then Save zone."
@@ -1197,6 +1244,7 @@ class CameraZoneEditor(ZoneEditorBase):
         self.update_layout()
 
     def start_editing_zone(self):
+        """Start the shared edit flow and show simplified user guidance."""
         super().start_editing_zone()
         self.message(
             "Edit this zone: update the name/PPE or drag its red corners, then Save changes. Changes apply to this camera."
@@ -1204,12 +1252,14 @@ class CameraZoneEditor(ZoneEditorBase):
         self.update_layout()
 
     def clear_draft_boundary(self):
+        """Clear draft corners and explain how to redraw the polygon."""
         super().clear_draft_boundary()
         self.message(
             "Boundary cleared in the draft. Click the new floor corners, then Save. Cancel restores the previous boundary."
         )
 
     def save_zone(self):
+        """Save the zone through the base workflow and refresh simplified controls."""
         super().save_zone()
         self.message("Saved! This zone will appear whenever you open this camera.")
         self.update_layout()

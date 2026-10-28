@@ -3,12 +3,16 @@ import json
 import math
 from pathlib import Path
 
-from zone_core import load_config, scaled_zones
-from zone_localisation import ZoneLocaliser
+if __package__:
+    from .zone_core import load_config, scaled_zones
+    from .zone_localisation import ZoneLocaliser
+else:
+    from zone_core import load_config, scaled_zones
+    from zone_localisation import ZoneLocaliser
 
 
 class ZoneModule:
-    """Localise workers and assess zone PPE requirements for one video."""
+    """Localise workers and assess zone PPE requirements for one media session."""
 
     def __init__(
         self,
@@ -36,12 +40,27 @@ class ZoneModule:
         self.boundary_margin_px = boundary_margin_px
         self.track_timeout_seconds = track_timeout_seconds
         self.localiser = None
+        # Track the current zone visit so PPE seen before entering cannot carry over.
         self.track_context = {}
         self.last_timestamp = None
 
     @classmethod
     def from_json(cls, config_path, camera_id, **kwargs):
+        """Construct a zone module from a validated JSON configuration."""
         return cls(load_config(config_path), camera_id, **kwargs)
+
+    def prepare(self, frame_size):
+        """Validate the media dimensions and prepare the camera-specific polygons."""
+        frame_size = tuple(frame_size)
+        if self.localiser is None:
+            self.localiser = ZoneLocaliser(
+                self.config,
+                self.camera_id,
+                frame_size,
+                self.boundary_margin_px,
+            )
+        elif frame_size != self.localiser.frame_size:
+            raise ValueError("Frame dimensions changed. Create a new ZoneModule.")
 
     def process(self, workers, frame_size, video_time, ppe_last_seen=None):
         """Add location and PPE results to a copy of each worker.
@@ -50,6 +69,7 @@ class ZoneModule:
         ppe_last_seen maps worker IDs to {PPE item: last detection time}.
         Without history, only current-frame PPE detections are used.
         """
+        # A strictly increasing clock lets track history expire predictably.
         now = float(video_time)
 
         if not math.isfinite(now) or now < 0:
@@ -64,20 +84,9 @@ class ZoneModule:
             )
 
         frame_size = tuple(frame_size)
+        self.prepare(frame_size)
 
-        if self.localiser is None:
-            self.localiser = ZoneLocaliser(
-                self.config,
-                self.camera_id,
-                frame_size,
-                self.boundary_margin_px,
-            )
-        elif frame_size != self.localiser.frame_size:
-            raise ValueError(
-                "Frame dimensions changed. Create a new ZoneModule."
-            )
-
-        # Check all boxes before updating tracking history.
+        # Validate every box first, before mutating this module's temporal state.
         locations = {
             track_id: self.localiser.locate(
                 worker["bbox"], worker.get("feet_visible")
@@ -86,6 +95,7 @@ class ZoneModule:
         }
         self.last_timestamp = now
 
+        # Expire tracks that have disappeared long enough to make IDs reusable.
         for track_id in list(self.track_context):
             last_seen = self.track_context[track_id]["last_seen"]
             if now - last_seen >= self.track_timeout_seconds:
@@ -99,6 +109,7 @@ class ZoneModule:
             worker["zone_camera_id"] = self.camera_id
             worker["zone_timestamp_s"] = now
 
+            # Use None for uncertain location and an empty tuple for outside zones.
             zone_key = (
                 None
                 if location["zone_ids"] is None
@@ -122,7 +133,10 @@ class ZoneModule:
             context["last_seen"] = now
             worker["zone_retained_ppe"] = None
             worker["zone_not_detected"] = None
+            worker["zone_violations"] = None
+            worker["zone_ambiguous_ppe"] = None
 
+            # Keep uncertain, unmonitored, access, and PPE cases distinct.
             if zone_key is None:
                 status = "UNCERTAIN"
             elif not zone_key:
@@ -133,7 +147,7 @@ class ZoneModule:
                 status = "NO_PPE_REQUIRED"
                 worker["zone_retained_ppe"] = []
                 worker["zone_not_detected"] = []
-            elif track_id is None:
+            elif worker.get("track_id", track_id) is None:
                 status = "UNCERTAIN"
             else:
                 if ppe_last_seen is not None:
@@ -152,6 +166,7 @@ class ZoneModule:
                         }
                     )
                 else:
+                    # Still images provide only current-frame PPE, with no history.
                     current = worker.get("ppe")
                     evidence = None if current is None else set(current)
 
@@ -160,29 +175,34 @@ class ZoneModule:
                 else:
                     required = set(location["required_ppe"])
 
-                    # Conflicting or unassigned PPE cannot confirm compliance.
-                    conflicts = set(worker.get("violations", [])) | set(
-                        worker.get("ambiguous_ppe", [])
-                    )
+                    # Missing-item or ambiguous labels cannot count as positive PPE.
+                    violations = set(worker.get("violations", []))
+                    ambiguous = set(worker.get("ambiguous_ppe", []))
+                    conflicts = violations | ambiguous
                     evidence -= conflicts
 
-                    missing = sorted(required - evidence)
+                    worker["zone_violations"] = sorted(required & violations)
+                    worker["zone_ambiguous_ppe"] = sorted(required & ambiguous)
+                    missing = sorted(required - evidence - violations - ambiguous)
                     worker["zone_retained_ppe"] = sorted(evidence)
                     worker["zone_not_detected"] = missing
 
-                    # A missed detection alone does not prove PPE is absent.
-                    status = (
-                        "REVIEW" if missing else "REQUIRED_PPE_DETECTED"
-                    )
-                    if required & set(worker.get("ambiguous_ppe", [])):
+                    # Explicit missing-item evidence is stronger than a missed detection.
+                    if worker["zone_violations"]:
+                        status = "UNSAFE"
+                    elif worker["zone_ambiguous_ppe"]:
                         status = "UNCERTAIN"
+                    elif missing:
+                        status = "REVIEW"
+                    else:
+                        status = "REQUIRED_PPE_DETECTED"
 
             worker["zone_compliance_status"] = status
 
         return output
 
     def annotate(self, frame, workers):
-        """Draw results on a copy of the frame."""
+        """Draw zones, person locations, and per-person result summaries."""
         import cv2
 
         if self.localiser is None:
@@ -193,13 +213,17 @@ class ZoneModule:
 
         for track_id, worker in workers.items():
             x1, y1, x2, y2 = map(int, worker["bbox"])
+            display_id = worker.get("track_id", track_id)
+            display_id = "untracked" if display_id is None else display_id
 
-            colour = (
-                (0, 190, 0)
-                if worker["zone_compliance_status"]
-                in ("REQUIRED_PPE_DETECTED", "NO_PPE_REQUIRED")
-                else (0, 160, 255)
-            )
+            # Use separate colors for confirmed compliance, unsafe, and review states.
+            status = worker["zone_compliance_status"]
+            if status in ("REQUIRED_PPE_DETECTED", "NO_PPE_REQUIRED"):
+                colour = (0, 190, 0)
+            elif status == "UNSAFE":
+                colour = (0, 0, 255)
+            else:
+                colour = (0, 160, 255)
 
             cv2.rectangle(output, (x1, y1), (x2, y2), colour, 2)
             cv2.circle(
@@ -210,6 +234,7 @@ class ZoneModule:
                 -1,
             )
 
+            # A missing zone list means uncertain; an empty list means outside zones.
             zone_label = (
                 "Location uncertain"
                 if worker["zone_ids"] is None
@@ -217,7 +242,7 @@ class ZoneModule:
             )
 
             lines = [
-                f"ID {track_id}: {zone_label}",
+                f"ID {display_id}: {zone_label}",
                 worker["zone_compliance_status"],
             ]
 
@@ -228,6 +253,15 @@ class ZoneModule:
             if worker["zone_not_detected"]:
                 lines.append(
                     "Not detected: " + ", ".join(worker["zone_not_detected"])
+                )
+            if worker["zone_violations"]:
+                lines.append(
+                    "Violation: " + ", ".join(worker["zone_violations"])
+                )
+            if worker["zone_ambiguous_ppe"]:
+                lines.append(
+                    "Ambiguous PPE: "
+                    + ", ".join(worker["zone_ambiguous_ppe"])
                 )
 
             base = max(15, min(height - 5 - len(lines) * 17, y1 - 8))
@@ -254,7 +288,7 @@ def export_activity_zones(
     workstation_zone_ids=(),
     walkway_zone_ids=(),
 ):
-    """Export selected polygons for the standalone activity program."""
+    """Export selected scaled polygons for the separate activity program."""
     polygons = scaled_zones(config, camera_id, frame_size)
 
     chosen = set(workstation_zone_ids) | set(walkway_zone_ids)

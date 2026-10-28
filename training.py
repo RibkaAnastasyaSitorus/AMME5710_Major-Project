@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import csv
 from pathlib import Path
 
+# This script benchmarks detector checkpoints; it is separate from inference.
 # =========================================================
 # 1. PATHS
 # =========================================================
@@ -16,7 +17,7 @@ DATA_YAML = (
     / "construction-ppe.yaml"
 )
 
-# Use an absolute path to avoid nested runs/detect folders
+# Store benchmark runs outside the current working directory's default output.
 OUTPUT_DIR = PROJECT_DIR / "runs" / "benchmark"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -32,10 +33,11 @@ MODELS = {
     "YOLO26n": "yolo26n.pt",
 }
 
+# Shared settings keep each model's training/evaluation comparable.
 EPOCHS = 20
 IMAGE_SIZE = 640
 BATCH_SIZE = 16
-DEVICE = 0  # Change to "cpu" if CUDA is unavailable
+DEVICE = 0  # Use "cpu" instead when CUDA is unavailable.
 
 all_results = []
 
@@ -52,7 +54,7 @@ for model_name, weights in MODELS.items():
     run_dir = OUTPUT_DIR / model_name
     best_model_path = run_dir / "weights" / "best.pt"
 
-    # Train only if a trained checkpoint does not already exist
+    # Reuse an existing checkpoint to avoid repeating a completed training run.
     if best_model_path.is_file():
         print(f"Existing trained model found:\n{best_model_path}")
         trained_model = YOLO(str(best_model_path))
@@ -74,7 +76,7 @@ for model_name, weights in MODELS.items():
             seed=42
         )
 
-        # Find the actual training output directory
+        # Ultralytics may choose a generated run directory for this training job.
         save_dir = Path(model.trainer.save_dir)
         best_model_path = save_dir / "weights" / "best.pt"
 
@@ -86,9 +88,7 @@ for model_name, weights in MODELS.items():
         print(f"Best checkpoint:\n{best_model_path}")
         trained_model = YOLO(str(best_model_path))
 
-    # -----------------------------------------------------
-    # Evaluate on the held-out TEST split
-    # -----------------------------------------------------
+    # Measure generalization on the held-out test split.
 
     print(f"Testing {model_name}...")
 
@@ -104,9 +104,7 @@ for model_name, weights in MODELS.items():
         exist_ok=True
     )
 
-    # -----------------------------------------------------
-    # Extract metrics
-    # -----------------------------------------------------
+    # Convert metric objects to plain numbers for reporting and CSV output.
 
     precision = float(metrics.box.mp)
     recall = float(metrics.box.mr)
@@ -139,7 +137,7 @@ for model_name, weights in MODELS.items():
     print(f"mAP50-95:       {metrics.box.map:.4f}")
     print(f"Inference time: {metrics.speed['inference']:.2f} ms/image")
 
-    # Save intermediate results in case a later model fails
+    # Persist each model's results before starting the next benchmark.
     csv_path = OUTPUT_DIR / "model_comparison.csv"
 
     with open(csv_path, "w", newline="", encoding="utf-8") as file:
