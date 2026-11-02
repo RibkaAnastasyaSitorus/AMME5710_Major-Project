@@ -13,6 +13,8 @@ INPUT_PATH = PROJECT_DIR / "PPEVideo4.mp4"
 CONFIDENCE_THRESHOLD = 0.25
 # Keep a video PPE detection valid for this many seconds after it was seen.
 PPE_RETENTION_SECONDS = 0.5
+# Temporarily show raw person, PPE, and violation boxes with confidence labels.
+DRAW_ALL_DETECTION_BOXES = False
 ZONE_CONFIG_PATH = Path(__file__).parent / "Zone" / "zone_config.json"
 CAMERA_ID = "Workshop"
 
@@ -33,6 +35,7 @@ def main():
         file_path=INPUT_PATH,
         confidence_threshold=CONFIDENCE_THRESHOLD,
         zone_module=zone_module,
+        draw_detections=DRAW_ALL_DETECTION_BOXES,
     )
 
 

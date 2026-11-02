@@ -130,6 +130,7 @@ Edit these values near the top of `main.py`:
 | `INPUT_PATH` | Image or video to process. |
 | `CONFIDENCE_THRESHOLD` | Minimum detector confidence. |
 | `PPE_RETENTION_SECONDS` | How long recent PPE evidence may count in video. |
+| `DRAW_ALL_DETECTION_BOXES` | Temporarily overlays raw person, PPE, and violation boxes with confidence scores. |
 | `ZONE_CONFIG_PATH` | Saved camera and zone configuration JSON. |
 | `CAMERA_ID` | Camera entry whose polygons and rules match the input view. |
 
@@ -141,6 +142,12 @@ python main.py
 
 [`run_inference.py`](run_inference.py) remains an alternative launcher for the
 same entry point.
+
+Raw detection overlays are enabled by default for visual inspection. Person
+boxes are yellow, detected PPE boxes are magenta, and explicit violation boxes
+are red. Each label includes its class and confidence; person labels also show
+the tracker ID when available. Set `DRAW_ALL_DETECTION_BOXES = False` in
+`main.py` to hide these additional boxes.
 
 ### 6.2 Supported input and output
 
