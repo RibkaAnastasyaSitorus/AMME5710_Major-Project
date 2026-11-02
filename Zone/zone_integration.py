@@ -211,6 +211,12 @@ class ZoneModule:
         output = self.localiser.draw(frame)
         height, width = frame.shape[:2]
 
+        # Scale text with the shorter frame side so labels are readable on HD/4K
+        # video in both landscape and portrait (phone) orientation.
+        font_scale = max(0.5, min(height, width) / 900)
+        thickness = max(1, round(font_scale * 2))
+        line_h = round(38 * font_scale)
+
         for track_id, worker in workers.items():
             x1, y1, x2, y2 = map(int, worker["bbox"])
             display_id = worker.get("track_id", track_id)
@@ -225,11 +231,15 @@ class ZoneModule:
             else:
                 colour = (0, 160, 255)
 
-            cv2.rectangle(output, (x1, y1), (x2, y2), colour, 2)
+            # A running person is highlighted in red, whatever their PPE status.
+            if worker.get("activity") == "running":
+                colour = (0, 0, 255)
+
+            cv2.rectangle(output, (x1, y1), (x2, y2), colour, thickness)
             cv2.circle(
                 output,
                 tuple(int(round(value)) for value in worker["floor_point"]),
-                5,
+                max(5, round(5 * font_scale)),
                 colour,
                 -1,
             )
@@ -264,17 +274,17 @@ class ZoneModule:
                     + ", ".join(worker["zone_ambiguous_ppe"])
                 )
 
-            base = max(15, min(height - 5 - len(lines) * 17, y1 - 8))
+            base = max(line_h, min(height - 5 - len(lines) * line_h, y1 - 8))
 
             for index, text in enumerate(lines):
                 cv2.putText(
                     output,
                     text,
-                    (max(0, min(width - 1, x1)), base + index * 17),
+                    (max(0, min(width - 1, x1)), base + index * line_h),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
+                    font_scale,
                     colour,
-                    1,
+                    thickness,
                 )
 
         return output
