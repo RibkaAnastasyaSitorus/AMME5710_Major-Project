@@ -2,6 +2,7 @@ from pathlib import Path
 
 import cv2
 
+from activity_speed import ActivityRecognizer
 from ppe_detector import detect_frame
 from worker_tracker import update_workers
 
@@ -33,6 +34,8 @@ def process_image(
     )
     # One still has no temporal PPE history, so evaluate only its current detections.
     workers = update_workers(persons, ppe_detections, {}, 0.0)
+    # Activity needs motion, which a single image cannot provide.
+    ActivityRecognizer.label_still(workers)
     workers = zone_module.process(
         workers,
         frame_size=(width, height),
@@ -98,6 +101,7 @@ def process_video(
 
         # Histories persist between frames so brief detector misses do not erase PPE.
         worker_ppe_last_seen = {}
+        activity_recognizer = ActivityRecognizer()
         frame_number = 0
 
         while True:
@@ -121,6 +125,8 @@ def process_video(
                 worker_ppe_last_seen,
                 video_time,
             )
+            # Walking/running comes from each track's motion over ~1 second.
+            activity_recognizer.update(workers, video_time)
             # Apply each person's current zone rule to their recent PPE evidence.
             workers = zone_module.process(
                 workers,
