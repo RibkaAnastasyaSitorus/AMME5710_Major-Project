@@ -1,3 +1,6 @@
+import cv2
+
+
 # Canonical PPE labels used by the zone rules and the trained detector.
 ALL_PPE = {
     "helmet",
@@ -83,3 +86,40 @@ def detect_frame(frame, model, confidence_threshold, tracking=True):
 
     # Keep confidence and bbox data available to downstream processing.
     return persons, ppe_detections
+
+
+def draw_detection_boxes(frame, persons, ppe_detections):
+    """Draw raw model boxes, labels, confidence scores, and person track IDs."""
+    annotated = frame.copy()
+    detections = [
+        (person, (0, 255, 255))
+        for person in persons
+    ] + [
+        (
+            detection,
+            (0, 0, 255)
+            if detection["class_name"] in VIOLATION_CLASSES
+            else (255, 0, 255),
+        )
+        for detection in ppe_detections
+    ]
+
+    for detection, colour in detections:
+        x1, y1, x2, y2 = map(int, detection["bbox"])
+        label = f'{detection["class_name"]} {detection["confidence"]:.2f}'
+        if detection["class_name"] == "person" and detection["track_id"] is not None:
+            label += f' ID {detection["track_id"]}'
+
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), colour, 2)
+        label_y = max(y1 - 7, 15)
+        cv2.putText(
+            annotated,
+            label,
+            (x1, label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            colour,
+            1,
+        )
+
+    return annotated

@@ -1,10 +1,10 @@
 """Regression tests for person-to-PPE association and zone-aware inference."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from Zone.zone_integration import ZoneModule
-from ppe_detector import detect_frame
+from ppe_detector import detect_frame, draw_detection_boxes
 from video_processor import process_image, process_media
 from worker_tracker import update_workers
 
@@ -226,6 +226,33 @@ class ImageInferenceTests(unittest.TestCase):
         self.assertEqual(ppe[0]["class_name"], "helmet")
         self.assertEqual(model.kwargs["conf"], 0.25)
 
+    def test_detection_overlay_draws_person_ppe_and_violation_boxes(self):
+        frame = Mock()
+        annotated = object()
+        frame.copy.return_value = annotated
+        detections = [
+            {"class_name": "person", "confidence": 0.95, "bbox": (1, 2, 30, 40), "track_id": 7},
+        ]
+        ppe_detections = [
+            {"class_name": "helmet", "confidence": 0.8, "bbox": (5, 6, 12, 14), "track_id": None},
+            {"class_name": "no_helmet", "confidence": 0.7, "bbox": (15, 16, 22, 24), "track_id": None},
+        ]
+
+        with (
+            patch("ppe_detector.cv2.rectangle") as rectangle,
+            patch("ppe_detector.cv2.putText") as put_text,
+        ):
+            result = draw_detection_boxes(frame, detections, ppe_detections)
+
+        self.assertIs(result, annotated)
+        self.assertEqual(rectangle.call_count, 3)
+        self.assertEqual(put_text.call_count, 3)
+        labels = [call.args[1] for call in put_text.call_args_list]
+        self.assertEqual(
+            labels,
+            ["person 0.95 ID 7", "helmet 0.80", "no_helmet 0.70"],
+        )
+
     def test_process_image_runs_zone_pipeline_and_writes_png(self):
         class FakeZoneModule:
             def __init__(self):
@@ -254,17 +281,23 @@ class ImageInferenceTests(unittest.TestCase):
                     [],
                 ),
             ) as detect,
+            patch(
+                "video_processor.draw_detection_boxes",
+                side_effect=lambda image, *_: image,
+            ) as draw_boxes,
         ):
             output_path = process_image(
                 object(),
                 "sample.jpg",
                 0.25,
                 zone_module,
+                draw_detections=True,
             )
 
         self.assertEqual(output_path, "sample_annotated.png")
         self.assertEqual(zone_module.prepared_size, (60, 40))
         detect.assert_called_once()
+        draw_boxes.assert_called_once()
         imwrite.assert_called_once()
         self.assertEqual(len(zone_module.processed_workers), 1)
 

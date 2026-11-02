@@ -3,7 +3,7 @@ from pathlib import Path
 import cv2
 
 from activity_speed import ActivityRecognizer
-from ppe_detector import detect_frame
+from ppe_detector import detect_frame, draw_detection_boxes
 from worker_tracker import update_workers
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
@@ -15,6 +15,7 @@ def process_image(
     file_path,
     confidence_threshold,
     zone_module,
+    draw_detections=False,
 ):
     """Detect PPE in one image, apply camera zones, and save an annotated PNG."""
     if Path(file_path).suffix.lower() not in IMAGE_EXTENSIONS:
@@ -47,6 +48,12 @@ def process_image(
         Path(file_path).with_name(Path(file_path).stem + "_annotated.png")
     )
     annotated = zone_module.annotate(frame, workers)
+    if draw_detections:
+        annotated = draw_detection_boxes(
+            annotated,
+            persons,
+            ppe_detections,
+        )
     if not cv2.imwrite(output_path, annotated):
         raise RuntimeError(f"Cannot write annotated image: {output_path}")
 
@@ -60,6 +67,7 @@ def process_video(
     file_path,
     confidence_threshold,
     zone_module,
+    draw_detections=False,
 ):
     """Process each video frame while retaining PPE evidence by person track."""
     if Path(file_path).suffix.lower() not in {
@@ -136,6 +144,12 @@ def process_video(
             )
 
             annotated = zone_module.annotate(frame, workers)
+            if draw_detections:
+                annotated = draw_detection_boxes(
+                    annotated,
+                    persons,
+                    ppe_detections,
+                )
 
             writer.write(annotated)
 
@@ -168,6 +182,7 @@ def process_media(
     file_path,
     confidence_threshold,
     zone_module,
+    draw_detections=False,
 ):
     """Dispatch an input file to the matching still-image or video pipeline."""
     suffix = Path(file_path).suffix.lower()
@@ -177,6 +192,7 @@ def process_media(
             file_path,
             confidence_threshold,
             zone_module,
+            draw_detections=draw_detections,
         )
     if suffix in VIDEO_EXTENSIONS:
         return process_video(
@@ -184,5 +200,6 @@ def process_media(
             file_path,
             confidence_threshold,
             zone_module,
+            draw_detections=draw_detections,
         )
     raise ValueError(f"Unsupported image or video file: {file_path}")

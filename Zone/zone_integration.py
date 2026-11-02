@@ -277,9 +277,11 @@ class ZoneModule:
             base = max(line_h, min(height - 5 - len(lines) * line_h, y1 - 8))
 
             for index, text in enumerate(lines):
+                position = (max(0, min(width - 1, x1)), base + index * 17)
                 cv2.putText(
                     output,
                     text,
+                    position,
                     (max(0, min(width - 1, x1)), base + index * line_h),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale,
