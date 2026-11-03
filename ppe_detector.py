@@ -1,4 +1,5 @@
 import cv2
+import torch
 
 
 # Canonical PPE labels used by the zone rules and the trained detector.
@@ -19,6 +20,8 @@ VIOLATION_CLASSES = {
     "none": "vest",
 }
 
+DEFAULT_DEVICE = 0 if torch.cuda.is_available() else "cpu"
+
 
 def normalise(name):
     """Standardise model labels so later class comparisons are consistent."""
@@ -31,7 +34,13 @@ def normalise(name):
     )
 
 
-def detect_frame(frame, model, confidence_threshold, tracking=True):
+def detect_frame(
+    frame,
+    model,
+    confidence_threshold,
+    tracking=True,
+    device=DEFAULT_DEVICE,
+):
     """Run detection and separate people from PPE-related detections.
 
     Video frames use persistent tracker IDs; still images use prediction only.
@@ -43,7 +52,7 @@ def detect_frame(frame, model, confidence_threshold, tracking=True):
             conf=confidence_threshold,
             tracker="bytetrack.yaml",
             persist=True,
-            device=0,
+            device=device,
             verbose=False
         )[0]
     else:
@@ -51,7 +60,7 @@ def detect_frame(frame, model, confidence_threshold, tracking=True):
         result = model.predict(
             source=frame,
             conf=confidence_threshold,
-            device=0,
+            device=device,
             verbose=False
         )[0]
 

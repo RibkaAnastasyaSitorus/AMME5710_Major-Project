@@ -120,19 +120,21 @@ The annotation uses green for `REQUIRED_PPE_DETECTED` and
 
 ## 6. Running the Program
 
-### 6.1 Configure an inference run
+### 6.1 Select an inference source
 
-Edit these values near the top of `main.py`:
+Set `SOURCE` near the top of `main.py`, then run `python main.py`:
 
-| Setting | Purpose |
-|---|---|
-| `MODEL_PATH` | Trained YOLO checkpoint. |
-| `INPUT_PATH` | Image or video to process. |
-| `CONFIDENCE_THRESHOLD` | Minimum detector confidence. |
-| `PPE_RETENTION_SECONDS` | How long recent PPE evidence may count in video. |
-| `DRAW_ALL_DETECTION_BOXES` | Temporarily overlays raw person, PPE, and violation boxes with confidence scores. |
-| `ZONE_CONFIG_PATH` | Saved camera and zone configuration JSON. |
-| `CAMERA_ID` | Camera entry whose polygons and rules match the input view. |
+| `SOURCE` | Input |
+|---:|---|
+| `0` | Image at `INPUT_PATH` |
+| `1` | Video at `INPUT_PATH` (default) |
+| `2` | Live camera at `CAMERA_INDEX` |
+
+Set `INPUT_PATH` to the image or video file you want to analyze. The default
+zone camera is `Workshop` for image/video and `CameraFeed` for live camera.
+Update `MEDIA_CAMERA_ID` or `LIVE_CAMERA_ID` near the top of `main.py` to
+select another saved camera view. The model path, confidence threshold, PPE
+retention, and raw detection overlay are configured there too.
 
 Run from the repository directory on Windows:
 
@@ -140,16 +142,19 @@ Run from the repository directory on Windows:
 python main.py
 ```
 
-[`run_inference.py`](run_inference.py) remains an alternative launcher for the
-same entry point.
-
 Raw detection overlays are enabled by default for visual inspection. Person
 boxes are yellow, detected PPE boxes are magenta, and explicit violation boxes
 are red. Each label includes its class and confidence; person labels also show
 the tracker ID when available. Set `DRAW_ALL_DETECTION_BOXES = False` in
 `main.py` to hide these additional boxes.
 
-### 6.2 Supported input and output
+Camera mode opens a live window; press `q` or `Esc` to stop. It requests a
+resolution matching the selected saved camera view and reports an error if
+the camera cannot provide a matching aspect ratio. Inference uses CUDA when
+available and otherwise falls back to CPU; CPU processing may not keep up
+with the camera's full frame rate.
+
+### 6.3 Supported input and output
 
 Supported image formats: JPG, JPEG, PNG, BMP, TIFF, and WebP. The annotated
 image is saved beside its input as `<input>_annotated.png`.
@@ -176,7 +181,6 @@ saved beside its input with `_temporal` appended to its filename.
 | File | Responsibility |
 |---|---|
 | [`main.py`](main.py) | Configures and starts image/video inference. |
-| [`run_inference.py`](run_inference.py) | Compatibility launcher for `main.py`. |
 | [`video_processor.py`](video_processor.py) | Dispatches image/video inputs, runs frame processing, and writes annotated output. |
 | [`ppe_detector.py`](ppe_detector.py) | Runs YOLO prediction/tracking and separates people, PPE, and violation detections. |
 | [`worker_tracker.py`](worker_tracker.py) | Associates PPE with people and maintains per-person recent PPE evidence. |
