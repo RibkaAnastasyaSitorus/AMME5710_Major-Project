@@ -8,8 +8,10 @@ from video_processor import process_image, process_video
 
 # File and model locations.
 PROJECT_DIR = Path(__file__).resolve().parents[2]
-MODEL_PATH = Path(__file__).with_name("best.pt")
+MODEL_PATH = Path(__file__).parent / "benchmark" / "YOLOv8n" / "weights" / "best.pt"
 INPUT_PATH = PROJECT_DIR / "PPEVideo4.mp4"
+
+# Zone configuration file saved from the zone editor.
 ZONE_CONFIG_PATH = Path(__file__).parent / "Zone" / "zone_config.json"
 
 # Detection and PPE retention settings.
@@ -23,10 +25,10 @@ CAMERA_INDEX = 0
 
 # Output settings.
 DRAW_ALL_DETECTION_BOXES = False
+SHOW_VIDEO_PREVIEW = True
 
 # Run selection: 0 = image, 1 = video, 2 = live camera.
 SOURCE = 2
-
 
 def main():
     """Run PPE inference on an image, video, or live camera."""
@@ -71,6 +73,7 @@ def main():
             confidence_threshold=CONFIDENCE_THRESHOLD,
             zone_module=zone_module,
             draw_detections=DRAW_ALL_DETECTION_BOXES,
+            show_preview=SHOW_VIDEO_PREVIEW,
         )
 
 

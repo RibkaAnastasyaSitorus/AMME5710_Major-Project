@@ -11,6 +11,132 @@ else:
     from zone_localisation import ZoneLocaliser
 
 
+def _draw_unsafe_worker_summary(frame, workers):
+    """Draw a compact panel listing unsafe tracked workers and PPE findings."""
+    import cv2
+
+    unsafe_workers = [
+        (track_id, worker)
+        for track_id, worker in workers.items()
+        if worker["zone_compliance_status"] == "UNSAFE"
+    ]
+    if not unsafe_workers:
+        return frame
+
+    height, width = frame.shape[:2]
+    font_scale = max(0.3, min(height, width) / 1400)
+    thickness = max(1, round(font_scale * 2))
+    line_height = max(14, round(font_scale * 32))
+    padding = max(6, round(font_scale * 16))
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    max_text_width = max(1, width - padding * 2 - 4)
+
+    def wrap_text(text):
+        words = text.split()
+        wrapped = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            text_width = cv2.getTextSize(
+                candidate, font, font_scale, thickness
+            )[0][0]
+            if current and text_width > max_text_width:
+                wrapped.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            wrapped.append(current)
+        return wrapped
+
+    groups = []
+    for track_id, worker in unsafe_workers:
+        display_id = worker.get("track_id", track_id)
+        display_id = "untracked" if display_id is None else display_id
+        missing_ppe = sorted(
+            set(worker.get("zone_not_detected") or [])
+            | set(worker.get("zone_violations") or [])
+        )
+        if missing_ppe:
+            finding = "Missing PPE: " + ", ".join(missing_ppe)
+        elif worker.get("access_prohibited"):
+            finding = "Prohibited access; no specific PPE flagged"
+        else:
+            finding = "No specific missing PPE identified"
+        groups.append(wrap_text(f"ID {display_id} | {finding}"))
+
+    title = f"UNSAFE WORKERS ({len(unsafe_workers)})"
+    title_height = cv2.getTextSize(title, font, font_scale, thickness)[0][1]
+    available_lines = max(
+        1,
+        (height - padding * 2 - title_height - padding) // line_height,
+    )
+    total_lines = sum(len(group) for group in groups)
+    content_lines = []
+    shown_workers = 0
+
+    if total_lines <= available_lines:
+        for group in groups:
+            content_lines.extend(group)
+            shown_workers += 1
+    else:
+        content_budget = max(0, available_lines - 1)
+        for group in groups:
+            if len(group) > content_budget:
+                break
+            content_lines.extend(group)
+            content_budget -= len(group)
+            shown_workers += 1
+        content_lines.append(
+            f"+{len(unsafe_workers) - shown_workers} more worker(s)"
+        )
+
+    all_lines = [title, *content_lines]
+    text_width = max(
+        cv2.getTextSize(line, font, font_scale, thickness)[0][0]
+        for line in all_lines
+    )
+    panel_width = min(width - 1, text_width + padding * 2)
+    panel_height = min(
+        height - 1,
+        padding * 2 + title_height + padding + line_height * len(content_lines),
+    )
+    overlay = frame.copy()
+    cv2.rectangle(
+        overlay,
+        (0, 0),
+        (panel_width, panel_height),
+        (0, 0, 120),
+        -1,
+    )
+    frame = cv2.addWeighted(overlay, 0.78, frame, 0.22, 0)
+
+    y = padding + title_height
+    cv2.putText(
+        frame,
+        title,
+        (padding, y),
+        font,
+        font_scale,
+        (255, 255, 255),
+        thickness,
+    )
+    y += padding + line_height
+    for line in content_lines:
+        cv2.putText(
+            frame,
+            line,
+            (padding, y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+        )
+        y += line_height
+
+    return frame
+
+
 class ZoneModule:
     """Localise workers and assess zone PPE requirements for one media session."""
 
@@ -288,7 +414,7 @@ class ZoneModule:
                     thickness,
                 )
 
-        return output
+        return _draw_unsafe_worker_summary(output, workers)
 
 
 def export_activity_zones(

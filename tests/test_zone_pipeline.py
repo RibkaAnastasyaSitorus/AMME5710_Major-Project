@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from Zone.zone_integration import ZoneModule
+from Zone.zone_integration import ZoneModule, _draw_unsafe_worker_summary
 from ppe_detector import detect_frame, draw_detection_boxes
 from video_processor import process_image, process_media
 from worker_tracker import update_workers
@@ -157,6 +157,51 @@ class ZoneComplianceTests(unittest.TestCase):
 
         self.assertEqual(worker["zone_not_detected"], ["helmet"])
         self.assertEqual(worker["zone_compliance_status"], "REVIEW")
+
+    def test_unsafe_summary_shows_worker_id_and_missing_ppe_only(self):
+        frame = Mock()
+        frame.shape = (480, 640, 3)
+        frame.copy.return_value = frame
+        workers = {
+            7: {
+                "track_id": 7,
+                "zone_compliance_status": "UNSAFE",
+                "zone_not_detected": ["vest"],
+                "zone_violations": ["helmet"],
+                "access_prohibited": False,
+            },
+            8: {
+                "track_id": 8,
+                "zone_compliance_status": "REVIEW",
+                "zone_not_detected": ["gloves"],
+                "zone_violations": [],
+                "access_prohibited": False,
+            },
+        }
+
+        with (
+            patch("cv2.rectangle"),
+            patch("cv2.addWeighted", return_value=frame),
+            patch("cv2.putText") as put_text,
+        ):
+            result = _draw_unsafe_worker_summary(frame, workers)
+
+        self.assertIs(result, frame)
+        labels = [call.args[1] for call in put_text.call_args_list]
+        self.assertIn("UNSAFE WORKERS (1)", labels)
+        self.assertTrue(
+            any("ID 7" in label for label in labels),
+            labels,
+        )
+        self.assertTrue(
+            any("helmet" in label for label in labels),
+            labels,
+        )
+        self.assertTrue(
+            any("vest" in label for label in labels),
+            labels,
+        )
+        self.assertFalse(any("ID 8" in label for label in labels), labels)
 
     def test_untracked_person_cannot_be_reported_as_compliant(self):
         workers = update_workers(

@@ -68,8 +68,9 @@ def process_video(
     confidence_threshold,
     zone_module,
     draw_detections=False,
+    show_preview=True,
 ):
-    """Process each video frame while retaining PPE evidence by person track."""
+    """Process video, optionally previewing frames while retaining PPE history."""
     if Path(file_path).suffix.lower() not in {
         ".mp4", ".avi", ".mov", ".mkv", ".wmv"
     }:
@@ -81,6 +82,7 @@ def process_video(
         raise RuntimeError(f"Cannot open video: {file_path}")
 
     writer = None
+    preview_created = False
 
     try:
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -106,6 +108,10 @@ def process_video(
 
         if not writer.isOpened():
             raise RuntimeError("Cannot create output video.")
+
+        if show_preview:
+            cv2.namedWindow("PPE Video Preview", cv2.WINDOW_NORMAL)
+            preview_created = True
 
         # Histories persist between frames so brief detector misses do not erase PPE.
         worker_ppe_last_seen = {}
@@ -153,6 +159,13 @@ def process_video(
 
             writer.write(annotated)
 
+            if show_preview:
+                cv2.imshow("PPE Video Preview", annotated)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q") or key == 27:
+                    print("Video preview stopped by user.")
+                    break
+
             if frame_number % max(1, int(fps)) == 0:
                 status_counts = {}
                 for worker in workers.values():
@@ -171,6 +184,8 @@ def process_video(
         cap.release()
         if writer is not None:
             writer.release()
+        if preview_created:
+            cv2.destroyWindow("PPE Video Preview")
 
     print("Video processing complete.")
     print("Output:", output_path)

@@ -148,6 +148,15 @@ are red. Each label includes its class and confidence; person labels also show
 the tracker ID when available. Set `DRAW_ALL_DETECTION_BOXES = False` in
 `main.py` to hide these additional boxes.
 
+For video input, `SHOW_VIDEO_PREVIEW = True` displays the annotated frames in
+a window while the output video is saved. Press `q` or `Esc` to stop processing
+early; the processed portion is still saved.
+
+The video preview and live-camera window also show a red `UNSAFE WORKERS`
+panel listing each unsafe worker's tracker ID and missing PPE when identified.
+If the unsafe status is due to prohibited access rather than a specific PPE
+finding, the panel indicates that instead.
+
 Camera mode opens a live window; press `q` or `Esc` to stop. It requests a
 resolution matching the selected saved camera view and reports an error if
 the camera cannot provide a matching aspect ratio. Inference uses CUDA when
@@ -161,6 +170,21 @@ image is saved beside its input as `<input>_annotated.png`.
 
 Supported video formats: MP4, AVI, MOV, MKV, and WMV. The annotated video is
 saved beside its input with `_temporal` appended to its filename.
+
+### 6.4 Compare model families at 20 and 50 epochs
+
+Run the training script from the repository directory:
+
+```powershell
+python training.py
+```
+
+The script trains YOLOv8n, YOLO11n, and YOLO26n for 50 epochs, evaluates each
+checkpoint on the test split, and writes each run to a separate folder under
+`runs/benchmark` (an incremented folder is used if the run name already exists).
+The 20-epoch baselines remain unchanged; one combined comparison CSV is written
+as `runs/benchmark/model_comparison_20_vs_50.csv`. Training selects CUDA when
+available and CPU otherwise; CPU training can take considerably longer.
 
 ## 7. Limitations and Assumptions
 

@@ -1,27 +1,20 @@
-from ultralytics import YOLO
+"""Train 50-epoch detector models and compare them with 20-epoch baselines."""
+
 import csv
 from pathlib import Path
 
-# This script benchmarks detector checkpoints; it is separate from inference.
+import torch
+from ultralytics import YOLO
+
 # =========================================================
 # 1. PATHS
 # =========================================================
 
-PROJECT_DIR = Path(
-    r"C:\UNI\UNI_SEM_7\AMME5710\MajorProject"
-)
-
-DATA_YAML = (
-    PROJECT_DIR
-    / "Ultralytics_Dataset"
-    / "construction-ppe.yaml"
-)
-
-# Store benchmark runs outside the current working directory's default output.
+PROJECT_DIR = Path(r"C:\UNI\UNI_SEM_7\AMME5710\MajorProject")
+DATA_YAML = PROJECT_DIR / "Ultralytics_Dataset" / "construction-ppe.yaml"
 OUTPUT_DIR = PROJECT_DIR / "runs" / "benchmark"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-assert DATA_YAML.is_file(), f"Dataset YAML not found: {DATA_YAML}"
+BASELINE_CSV = Path(__file__).parent / "benchmark" / "model_comparison.csv"
+COMPARISON_CSV = OUTPUT_DIR / "model_comparison_20_vs_50.csv"
 
 # =========================================================
 # 2. EXPERIMENT SETTINGS
@@ -33,90 +26,58 @@ MODELS = {
     "YOLO26n": "yolo26n.pt",
 }
 
-# Shared settings keep each model's training/evaluation comparable.
-EPOCHS = 20
+BASELINE_EPOCHS = 20
+EPOCHS = 50
 IMAGE_SIZE = 640
 BATCH_SIZE = 16
-DEVICE = 0  # Use "cpu" instead when CUDA is unavailable.
+DEVICE = 0 if torch.cuda.is_available() else "cpu"
 
-all_results = []
+COMPARISON_FIELDS = [
+    "Model",
+    "Epochs",
+    "Precision",
+    "Recall",
+    "F1",
+    "mAP50",
+    "mAP50-95",
+    "Preprocess_ms",
+    "Inference_ms",
+    "Postprocess_ms",
+]
 
-# =========================================================
-# 3. TRAIN AND TEST EACH MODEL
-# =========================================================
 
-for model_name, weights in MODELS.items():
+def load_baselines():
+    """Load the original 20-epoch results without modifying their CSV."""
+    if not BASELINE_CSV.is_file():
+        raise FileNotFoundError(f"20-epoch results not found: {BASELINE_CSV}")
 
-    print("\n" + "=" * 60)
-    print(f"MODEL: {model_name}")
-    print("=" * 60)
+    with BASELINE_CSV.open(newline="", encoding="utf-8") as file:
+        baselines = {
+            row["Model"]: row
+            for row in csv.DictReader(file)
+            if row.get("Model") in MODELS
+        }
 
-    run_dir = OUTPUT_DIR / model_name
-    best_model_path = run_dir / "weights" / "best.pt"
-
-    # Reuse an existing checkpoint to avoid repeating a completed training run.
-    if best_model_path.is_file():
-        print(f"Existing trained model found:\n{best_model_path}")
-        trained_model = YOLO(str(best_model_path))
-
-    else:
-        print(f"Training {model_name}...")
-
-        model = YOLO(weights)
-
-        model.train(
-            data=str(DATA_YAML),
-            epochs=EPOCHS,
-            imgsz=IMAGE_SIZE,
-            batch=BATCH_SIZE,
-            device=DEVICE,
-            project=str(OUTPUT_DIR),
-            name=model_name,
-            exist_ok=False,
-            seed=42
+    missing = MODELS.keys() - baselines.keys()
+    if missing:
+        raise ValueError(
+            f"Missing 20-epoch baseline rows for: {', '.join(sorted(missing))}"
         )
+    return baselines
 
-        # Ultralytics may choose a generated run directory for this training job.
-        save_dir = Path(model.trainer.save_dir)
-        best_model_path = save_dir / "weights" / "best.pt"
 
-        if not best_model_path.is_file():
-            raise FileNotFoundError(
-                f"Could not find trained checkpoint: {best_model_path}"
-            )
-
-        print(f"Best checkpoint:\n{best_model_path}")
-        trained_model = YOLO(str(best_model_path))
-
-    # Measure generalization on the held-out test split.
-
-    print(f"Testing {model_name}...")
-
-    metrics = trained_model.val(
-        data=str(DATA_YAML),
-        split="test",
-        imgsz=IMAGE_SIZE,
-        batch=BATCH_SIZE,
-        device=DEVICE,
-        plots=True,
-        project=str(OUTPUT_DIR),
-        name=f"{model_name}_test",
-        exist_ok=True
-    )
-
-    # Convert metric objects to plain numbers for reporting and CSV output.
-
+def result_from_metrics(metrics, model_name, epochs):
+    """Convert Ultralytics test metrics to a CSV-ready row."""
     precision = float(metrics.box.mp)
     recall = float(metrics.box.mr)
-
     f1 = (
         2 * precision * recall / (precision + recall)
         if precision + recall > 0
         else 0.0
     )
-
-    result = {
+    return {
         "Model": model_name,
+        "Epochs": epochs,
         "Precision": precision,
         "Recall": recall,
         "F1": f1,
@@ -127,33 +88,91 @@ for model_name, weights in MODELS.items():
         "Postprocess_ms": metrics.speed["postprocess"],
     }
 
-    all_results.append(result)
 
-    print(f"\nResults for {model_name}")
-    print(f"Precision:      {precision:.4f}")
-    print(f"Recall:         {recall:.4f}")
-    print(f"F1-score:       {f1:.4f}")
-    print(f"mAP50:          {metrics.box.map50:.4f}")
-    print(f"mAP50-95:       {metrics.box.map:.4f}")
-    print(f"Inference time: {metrics.speed['inference']:.2f} ms/image")
+def train_and_test(model_name, weights):
+    """Train and test one model in its own 50-epoch run folder."""
+    print("\n" + "=" * 60)
+    print(f"MODEL: {model_name} ({EPOCHS} epochs)")
+    print("=" * 60)
 
-    # Persist each model's results before starting the next benchmark.
-    csv_path = OUTPUT_DIR / "model_comparison.csv"
+    model = YOLO(weights)
+    model.train(
+        data=str(DATA_YAML),
+        epochs=EPOCHS,
+        imgsz=IMAGE_SIZE,
+        batch=BATCH_SIZE,
+        device=DEVICE,
+        project=str(OUTPUT_DIR),
+        name=f"{model_name}_{EPOCHS}_epochs",
+        exist_ok=False,
+        seed=42,
+    )
 
-    with open(csv_path, "w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=list(all_results[0].keys())
+    run_dir = Path(model.trainer.save_dir)
+    best_model_path = run_dir / "weights" / "best.pt"
+    if not best_model_path.is_file():
+        raise FileNotFoundError(
+            f"Could not find trained checkpoint: {best_model_path}"
         )
-        writer.writeheader()
-        writer.writerows(all_results)
 
-# =========================================================
-# 4. FINISHED
-# =========================================================
+    metrics = YOLO(str(best_model_path)).val(
+        data=str(DATA_YAML),
+        split="test",
+        imgsz=IMAGE_SIZE,
+        batch=BATCH_SIZE,
+        device=DEVICE,
+        plots=True,
+        project=str(OUTPUT_DIR),
+        name=f"{run_dir.name}_test",
+        exist_ok=False,
+    )
 
-print("\n" + "=" * 60)
-print("BENCHMARK COMPLETED")
-print("=" * 60)
-print(f"Results CSV: {OUTPUT_DIR / 'model_comparison.csv'}")
-print(f"All model outputs: {OUTPUT_DIR}")
+    return result_from_metrics(metrics, model_name, EPOCHS), best_model_path
+
+
+def main():
+    """Train all configured models and save one 20-vs-50 comparison CSV."""
+    if not DATA_YAML.is_file():
+        raise FileNotFoundError(f"Dataset YAML not found: {DATA_YAML}")
+
+    baselines = load_baselines()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    comparison_rows = []
+    print(f"Training device: {DEVICE}")
+
+    for model_name, weights in MODELS.items():
+        baseline = {
+            field: baselines[model_name][field]
+            for field in COMPARISON_FIELDS
+            if field in baselines[model_name]
+        }
+        baseline.update(
+            {"Model": model_name, "Epochs": BASELINE_EPOCHS}
+        )
+        comparison_rows.append(baseline)
+
+        result, best_model_path = train_and_test(model_name, weights)
+        comparison_rows.append(result)
+        print(f"Best checkpoint: {best_model_path}")
+
+        with COMPARISON_CSV.open(
+            "w", newline="", encoding="utf-8"
+        ) as file:
+            writer = csv.DictWriter(file, fieldnames=COMPARISON_FIELDS)
+            writer.writeheader()
+            writer.writerows(comparison_rows)
+
+        print(
+            f"20 epochs mAP50-95: {baseline['mAP50-95']} | "
+            f"50 epochs mAP50-95: {result['mAP50-95']:.4f}"
+        )
+
+    print("\n" + "=" * 60)
+    print("50-EPOCH COMPARISON COMPLETED")
+    print("=" * 60)
+    print(f"Comparison CSV: {COMPARISON_CSV}")
+    print(f"Model checkpoints and test outputs: {OUTPUT_DIR}")
+
+
+if __name__ == "__main__":
+    main()
