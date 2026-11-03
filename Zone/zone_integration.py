@@ -213,7 +213,7 @@ class ZoneModule:
 
         # Scale text with the shorter frame side so labels are readable on HD/4K
         # video in both landscape and portrait (phone) orientation.
-        font_scale = max(0.5, min(height, width) / 900)
+        font_scale = max(0.1, min(height, width) / 1100)
         thickness = max(1, round(font_scale * 2))
         line_h = round(38 * font_scale)
 
@@ -277,12 +277,11 @@ class ZoneModule:
             base = max(line_h, min(height - 5 - len(lines) * line_h, y1 - 8))
 
             for index, text in enumerate(lines):
-                position = (max(0, min(width - 1, x1)), base + index * 17)
+                position = (max(0, min(width - 1, x1)), base + index * line_h)
                 cv2.putText(
                     output,
                     text,
                     position,
-                    (max(0, min(width - 1, x1)), base + index * line_h),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale,
                     colour,
