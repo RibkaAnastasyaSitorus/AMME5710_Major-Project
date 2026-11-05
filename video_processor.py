@@ -191,30 +191,3 @@ def process_video(
     print("Output:", output_path)
     return output_path
 
-
-def process_media(
-    model,
-    file_path,
-    confidence_threshold,
-    zone_module,
-    draw_detections=False,
-):
-    """Dispatch an input file to the matching still-image or video pipeline."""
-    suffix = Path(file_path).suffix.lower()
-    if suffix in IMAGE_EXTENSIONS:
-        return process_image(
-            model,
-            file_path,
-            confidence_threshold,
-            zone_module,
-            draw_detections=draw_detections,
-        )
-    if suffix in VIDEO_EXTENSIONS:
-        return process_video(
-            model,
-            file_path,
-            confidence_threshold,
-            zone_module,
-            draw_detections=draw_detections,
-        )
-    raise ValueError(f"Unsupported image or video file: {file_path}")

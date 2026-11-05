@@ -45,7 +45,7 @@
     "zone_fc1a03cf90": {
       "name": "Live",
       "required_ppe": [
-        "helmet"
+        "vest"
       ]
     }
   },

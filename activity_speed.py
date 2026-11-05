@@ -28,8 +28,8 @@ class ActivityRecognizer:
         window_seconds=1.0,
         min_seconds=0.5,
         stationary_speed=0.1,
-        run_enter_speed=0.8,
-        run_exit_speed=0.8,
+        run_enter_speed=1,
+        run_exit_speed=1,
         track_timeout_seconds=3.0,
     ):
         if min_seconds <= 0 or window_seconds < min_seconds:

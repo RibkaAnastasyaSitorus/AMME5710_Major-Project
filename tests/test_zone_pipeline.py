@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from Zone.zone_integration import ZoneModule, _draw_unsafe_worker_summary
 from ppe_detector import detect_frame, draw_detection_boxes
-from video_processor import process_image, process_media
+from video_processor import process_image
 from worker_tracker import update_workers
 
 
