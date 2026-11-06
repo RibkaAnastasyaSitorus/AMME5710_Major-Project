@@ -1,7 +1,7 @@
 task: detect
 mode: train
-model: yolo11n.pt
-data: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\Ultralytics_Dataset\construction-ppe.yaml
+model: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\CodeGit\AMME5710_Major-Project\weights\yolo11n.pt
+data: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\CodeGit\AMME5710_Major-Project\Ultralytics_Dataset\data.yaml
 epochs: 50
 time: null
 patience: 100
@@ -12,7 +12,7 @@ save_period: -1
 cache: false
 device: '0'
 workers: 8
-project: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\runs\benchmark
+project: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\runs\benchmark\code1_20_vs_50
 name: YOLO11n_50_epochs
 exist_ok: false
 pretrained: true
@@ -111,4 +111,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: tracktrack.yaml
-save_dir: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\runs\benchmark\YOLO11n_50_epochs
+save_dir: C:\UNI\UNI_SEM_7\AMME5710\MajorProject\runs\benchmark\code1_20_vs_50\YOLO11n_50_epochs
