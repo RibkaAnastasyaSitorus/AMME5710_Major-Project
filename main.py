@@ -8,7 +8,9 @@ from video_processor import process_image, process_video
 
 # File and model locations.
 PROJECT_DIR = Path(__file__).resolve().parents[2]
-MODEL_PATH = Path(__file__).parent / "benchmark" / "YOLOv8n" / "weights" / "best.pt"
+# MODEL_PATH = Path(__file__).parent / "benchmark" / "rerun_20_vs_50_20261105_154627" /"YOLOv8n_50_epochs" / "weights" / "best.pt"
+# MODEL_PATH = Path(__file__).parent / "benchmark" / "YOLOv8n_50_epochs" / "weights" / "best.pt"
+MODEL_PATH = Path(__file__).parent / "benchmark" / "best.pt"
 INPUT_PATH = PROJECT_DIR / "PPEVideo4.mp4"
 
 # Zone configuration file saved from the zone editor.

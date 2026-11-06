@@ -179,12 +179,15 @@ Run the training script from the repository directory:
 python training.py
 ```
 
-The script trains YOLOv8n, YOLO11n, and YOLO26n for 50 epochs, evaluates each
-checkpoint on the test split, and writes each run to a separate folder under
-`runs/benchmark` (an incremented folder is used if the run name already exists).
-The 20-epoch baselines remain unchanged; one combined comparison CSV is written
-as `runs/benchmark/model_comparison_20_vs_50.csv`. Training selects CUDA when
-available and CPU otherwise; CPU training can take considerably longer.
+The script freshly trains YOLOv8n, YOLO11n, and YOLO26n for both 20 and 50
+epochs, then evaluates each best checkpoint on the test split configured in
+`Ultralytics_Dataset/data.yaml`. During training, Ultralytics uses the
+validation split to monitor progress and select the best checkpoint; the
+reported comparison metrics and confusion matrices are generated from the
+test split. Each run is saved in a new timestamped folder under
+`../../runs/benchmark`; existing outputs are left untouched. The combined
+comparison CSV is saved in that folder. Training selects CUDA when available
+and CPU otherwise; CPU training can take considerably longer.
 
 ## 7. Limitations and Assumptions
 
