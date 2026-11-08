@@ -12,6 +12,8 @@ REPO_DIR = Path(__file__).resolve().parents[1]
 BEST_MODEL = (
     REPO_DIR
     / "benchmark"
+    / "YOLO26n_50_epochs"
+    / "weights"
     / "best.pt"
 )
 
@@ -39,7 +41,7 @@ def main():
         device=DEVICE,
         plots=True,
         project=str(PROJECT_DIR / "runs" / "final_test"),
-        name="YOLOv8n_50_epochs",
+        name="YOLO26n_50_epochs",
         exist_ok=False,
     )
 
